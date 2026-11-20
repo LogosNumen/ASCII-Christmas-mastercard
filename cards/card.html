@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>A Christmas card</title>
+<link rel="stylesheet" href="card.css">
+</head>
+<body>
+<pre id="card">* unwrapping your card... *</pre>
+<script src="card.js"></script>
+<script type="module">
+  // the code travels in the #fragment, which browsers never send to the server
+  import { openCard, normalize, isValidCode } from './crypt.mjs';
+  addEventListener('hashchange', () => location.reload());   // a new #code on the same page needs a fresh open
+  const code = normalize(decodeURIComponent(location.hash.slice(1)));
+  let text = null;
+  try { if (isValidCode(code)) text = await openCard(code); } catch { /* wrong key or bad file: treat as no card */ }
+  renderCard(text ?? 'This present will not open.\n\nCheck your code and try again.');
+</script>
+</body>
+</html>

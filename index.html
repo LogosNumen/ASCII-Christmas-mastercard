@@ -25,7 +25,7 @@
 <p id="hint" class="ui">[ click the tree ]</p>
 <form id="gift" class="ui" hidden>
   <label for="code">&gt; enter your code</label>
-  <input id="code" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40"> <button>[ open ]</button>
+  <input id="code" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="60"> <button>[ open ]</button>
   <p id="msg" role="status"></p>
   <button type="button" id="back">[ &lt; back to the tree ]</button>
 </form>
@@ -220,15 +220,14 @@ document.getElementById('back').addEventListener('click', () => show('tree'));
 addEventListener('keydown', e => { if (e.key === 'Escape' && mode === 'gift') show('tree'); });
 form.addEventListener('submit', async e => {
   e.preventDefault();
-  const code = input.value.trim().toLowerCase();
-  if (!/^[a-z0-9-]{1,40}$/.test(code)) { msg.textContent = '* codes are letters, numbers and dashes *'; return; }
-  const url = `cards/${code}.html`;
+  const { derive, normalize, isValidCode } = await import('./cards/crypt.mjs');
+  const code = normalize(input.value);
+  if (!isValidCode(code)) { msg.textContent = '* codes are letters, numbers and dashes *'; return; }
   msg.textContent = '* unwrapping... *';
-  try {
-    const res = await fetch(url, { method: 'HEAD' });
-    if (!res.ok) { msg.textContent = '* hmm, that code does not open anything *'; return; }
-  } catch { /* file:// can't fetch; just try the link */ }
-  location.href = url;
+  const { id } = await derive(code);
+  const res = await fetch(`cards/${id}.json`, { method: 'HEAD' });
+  if (!res.ok) { msg.textContent = '* hmm, that code does not open anything *'; return; }
+  location.href = `cards/card.html#${code}`;
 });
 </script>
 </body>
