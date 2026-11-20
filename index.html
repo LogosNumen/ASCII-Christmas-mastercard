@@ -6,11 +6,29 @@
 <title>ASCII Christmas</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  canvas { display: block; }
+  canvas { display: block; outline: none; }
+  .ui { position: fixed; left: 16px; right: 16px; bottom: 10vh; margin: 0; text-align: center;
+        font: 16px ui-monospace, Menlo, Consolas, monospace; color: hsl(44, 90%, 60%); }
+  .ui[hidden] { display: none; }
+  #hint { bottom: 2vh; opacity: .75; pointer-events: none; }
+  #gift label { display: block; margin-bottom: .6em; }
+  #code { font: inherit; color: #fff; background: transparent; border: 0; border-bottom: 1px dashed currentColor;
+          width: 14ch; text-align: center; text-transform: lowercase; caret-color: hsl(44, 90%, 60%); }
+  #code:focus { outline: none; border-bottom-style: solid; }
+  #gift button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: .3em .5em; }
+  #gift button:hover, #gift button:focus-visible { color: #fff; outline: none; }
+  #msg { min-height: 1.4em; margin: .6em 0; color: hsl(120, 50%, 60%); }
 </style>
 </head>
 <body>
-<canvas id="c" role="img" aria-label="A rotating 3D ASCII Christmas tree with lights, presents and a golden ring under a starry sky"></canvas>
+<canvas id="c" tabindex="0" role="button" aria-label="A rotating ASCII Christmas tree. Press Enter to open your present."></canvas>
+<p id="hint" class="ui">[ click the tree ]</p>
+<form id="gift" class="ui" hidden>
+  <label for="code">&gt; enter your code</label>
+  <input id="code" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40"> <button>[ open ]</button>
+  <p id="msg" role="status"></p>
+  <button type="button" id="back">[ &lt; back to the tree ]</button>
+</form>
 <script>
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const TAU = Math.PI * 2, rnd = Math.random;
@@ -19,9 +37,10 @@ const SPEED = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.08 : 0.
 const RAMP = '.:-=+*#%@';
 
 // ---- scene: a cloud of 3D points (y is up, ground at y=0) ----
-const P = [];
-const add = (x, y, z, nx, ny, nz, k, o = {}) => P.push({ x, y, z, nx, ny, nz, k, ...o });
-const TREE = 0, ORN = 1, LIGHT = 2, TRUNK = 3, RING = 4, GIFT = 5, TEXT = 6;
+const P = [], G = [];                                  // tree scene, big-present scene
+let T = P;                                              // scene that add() writes into
+const add = (x, y, z, nx, ny, nz, k, o = {}) => T.push({ x, y, z, nx, ny, nz, k, ...o });
+const TREE = 0, ORN = 1, LIGHT = 2, TRUNK = 3, RING = 4, GIFT = 5, TEXT = 6, STAR = 7, NONE = 255;
 
 // tree: 5 stacked tiers inside a cone envelope
 const H0 = 0.9, H1 = 10, TIERS = 5;
@@ -71,8 +90,19 @@ function gift(cx, cz, w, ht, hue) {
 }
 gift(1.9, 2.0, 0.9, 0.7, 0); gift(-2.2, 1.3, 0.8, 0.6, 210); gift(0.4, -2.5, 1.0, 0.8, 320); gift(-1.2, -2.0, 0.6, 0.5, 45);
 
+// the big present you open with a code: a box plus a two-loop bow, lifted to sit mid-screen
+T = G;
+gift(0, 0, 4.4, 3.4, 0);
+for (const side of [-1, 1])
+  for (let a = 0; a < TAU; a += 0.03) {
+    const c = Math.cos(a), s = Math.sin(a);
+    add(side * (0.75 + 0.7 * c), 3.4 + 0.55 + 0.55 * s, 0, c, s, 0, GIFT, { hue: 0, rib: true });
+  }
+for (const p of G) p.y += 2.4;
+T = P;
+
 // ---- screen / buffers ----
-let W, H, FS, CW, COLS, ROWS, N, zb, CH, CL, sky;
+let W, H, FS, CW, COLS, ROWS, N, zb, CH, CL, KD, sky, mode = 'tree';
 function resize() {
   const dpr = devicePixelRatio || 1;
   W = innerWidth; H = innerHeight;
@@ -83,7 +113,7 @@ function resize() {
   ctx.textBaseline = 'top';
   CW = ctx.measureText('M').width;
   COLS = Math.ceil(W / CW); ROWS = Math.ceil(H / FS); N = COLS * ROWS;
-  zb = new Float32Array(N); CH = new Array(N); CL = new Array(N);
+  zb = new Float32Array(N); CH = new Array(N); CL = new Array(N); KD = new Uint8Array(N);
   sky = Array.from({ length: Math.round(N * 0.006) }, () => ({
     i: Math.floor(rnd() * ROWS * 0.8) * COLS + Math.floor(rnd() * COLS), ph: rnd() * TAU, ch: '..·*+'[Math.floor(rnd() * 5)],
   }));
@@ -102,10 +132,10 @@ function proj(x, y, z) {
   PX = Math.round((W / 2 + xr * F / d) / CW);
   PY = Math.round((H * 0.45 - (y * cp + zr * sp) * F / d) / FS);
 }
-function plot(c, r, z, ch, col) {
+function plot(c, r, z, ch, col, k = NONE) {
   if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return;
   const i = r * COLS + c;
-  if (z < zb[i]) { zb[i] = z; CH[i] = ch; CL[i] = col; }
+  if (z < zb[i]) { zb[i] = z; CH[i] = ch; CL[i] = col; KD[i] = k; }
 }
 const shadeOf = p => {                     // Lambert light from upper-left-front
   const nx = p.nx * ca - p.nz * sa, nz0 = p.nx * sa + p.nz * ca;
@@ -124,35 +154,37 @@ function frame(ms) {
   const t = ms / 1000, ang = t * SPEED;
   ca = Math.cos(ang); sa = Math.sin(ang);
   F = Math.min(0.62 * H * D / 11, 0.9 * W * D / 14);
-  zb.fill(1e9); CH.fill('');
+  zb.fill(1e9); CH.fill(''); KD.fill(NONE);
 
   for (const s of sky) {                  // twinkling background, behind everything
     const b = 0.5 + 0.5 * Math.sin(t * 1.5 + s.ph);
     if (b > 0.15) { zb[s.i] = 1e8; CH[s.i] = s.ch; CL[s.i] = `rgba(220,225,255,${b * 0.8})`; }
   }
 
-  for (const p of P) {
+  for (const p of mode === 'tree' ? P : G) {
     proj(p.x, p.y, p.z);
     const z = PZ;
     switch (p.k) {
-      case TREE: { const s = shadeOf(p); plot(PX, PY, z, ramp(s), `hsl(${105 + p.v * 35},${50 + p.v * 30}%,${8 + s * 48}%)`); break; }
-      case ORN: { const b = 0.55 + 0.45 * Math.sin(t * 4 + p.ph); plot(PX, PY, z - 0.05, b > 0.6 ? '@' : 'o', `hsl(${p.hue},100%,${35 + b * 35}%)`); break; }
-      case LIGHT: { const b = Math.sin(t * 6 + p.s * 300); plot(PX, PY, z - 0.1, b > 0 ? '*' : '+', `hsl(${(p.s * 1080 + t * 120) % 360},100%,${55 + b * 15}%)`); break; }
-      case TRUNK: { const s = shadeOf(p); plot(PX, PY, z, '#', `hsl(25,55%,${10 + s * 25}%)`); break; }
+      case TREE: { const s = shadeOf(p); plot(PX, PY, z, ramp(s), `hsl(${105 + p.v * 35},${50 + p.v * 30}%,${8 + s * 48}%)`, TREE); break; }
+      case ORN: { const b = 0.55 + 0.45 * Math.sin(t * 4 + p.ph); plot(PX, PY, z - 0.05, b > 0.6 ? '@' : 'o', `hsl(${p.hue},100%,${35 + b * 35}%)`, TREE); break; }
+      case LIGHT: { const b = Math.sin(t * 6 + p.s * 300); plot(PX, PY, z - 0.1, b > 0 ? '*' : '+', `hsl(${(p.s * 1080 + t * 120) % 360},100%,${55 + b * 15}%)`, TREE); break; }
+      case TRUNK: { const s = shadeOf(p); plot(PX, PY, z, '#', `hsl(25,55%,${10 + s * 25}%)`, TREE); break; }
       case RING: { const b = Math.max(0, Math.min(1, (7 - z) / 14)); plot(PX, PY, z, ramp(0.1 + b * 0.5), `hsl(44,90%,${18 + b * 42}%)`); break; }
-      case GIFT: { const s = shadeOf(p); plot(PX, PY, z, p.rib ? '+' : ramp(s), p.rib ? `hsl(48,100%,${35 + s * 35}%)` : `hsl(${p.hue},80%,${15 + s * 40}%)`); break; }
+      case GIFT: { const s = shadeOf(p); plot(PX, PY, z, p.rib ? '+' : ramp(s), p.rib ? `hsl(48,100%,${35 + s * 35}%)` : `hsl(${p.hue},80%,${22 + s * 40}%)`); break; }
       case TEXT: { const b = Math.max(0, Math.min(1, (7 - z) / 14)), c0 = PX - (p.t.length >> 1);
         for (let j = 0; j < p.t.length; j++) plot(c0 + j, PY, z - 0.01, p.t[j], `hsl(44,95%,${25 + b * 45}%)`); break; }
     }
   }
 
   // star on top, always in front
-  proj(0, H1 + 0.35, 0);
-  const glow = 0.5 + 0.5 * Math.sin(t * 3);
-  [' \\|/ ', '--*--', ' /|\\ '].forEach((row, dy) => {
-    for (let dx = 0; dx < 5; dx++) if (row[dx] !== ' ')
-      plot(PX - 2 + dx, PY - 1 + dy, -1e9, row[dx], `hsl(50,100%,${row[dx] === '*' ? 85 : 55 + glow * 20}%)`);
-  });
+  if (mode === 'tree') {
+    proj(0, H1 + 0.35, 0);
+    const glow = 0.5 + 0.5 * Math.sin(t * 3);
+    [' \\|/ ', '--*--', ' /|\\ '].forEach((row, dy) => {
+      for (let dx = 0; dx < 5; dx++) if (row[dx] !== ' ')
+        plot(PX - 2 + dx, PY - 1 + dy, -1e9, row[dx], `hsl(50,100%,${row[dx] === '*' ? 85 : 55 + glow * 20}%)`, TREE);
+    });
+  }
 
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
@@ -164,6 +196,40 @@ function frame(ms) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// ---- hub: click the tree -> present -> code -> cards/<code>.html ----
+const hint = document.getElementById('hint'), form = document.getElementById('gift');
+const input = document.getElementById('code'), msg = document.getElementById('msg');
+const onTree = e => {                                  // true if the cell under the pointer (or next to it) is tree
+  const c = Math.floor(e.clientX / CW), r = Math.floor(e.clientY / FS);
+  for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+    const rr = r + dr, cc = c + dc;
+    if (rr >= 0 && cc >= 0 && rr < ROWS && cc < COLS && KD[rr * COLS + cc] === TREE) return true;
+  }
+  return false;
+};
+function show(m) {
+  mode = m;
+  hint.hidden = m !== 'tree'; form.hidden = m === 'tree'; msg.textContent = '';
+  if (m === 'gift') { input.value = ''; input.focus(); } else cv.focus();
+}
+cv.addEventListener('pointermove', e => { cv.style.cursor = mode === 'tree' && onTree(e) ? 'pointer' : 'default'; });
+cv.addEventListener('click', e => { if (mode === 'tree' && onTree(e)) show('gift'); });
+cv.addEventListener('keydown', e => { if (mode === 'tree' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); show('gift'); } });
+document.getElementById('back').addEventListener('click', () => show('tree'));
+addEventListener('keydown', e => { if (e.key === 'Escape' && mode === 'gift') show('tree'); });
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  const code = input.value.trim().toLowerCase();
+  if (!/^[a-z0-9-]{1,40}$/.test(code)) { msg.textContent = '* codes are letters, numbers and dashes *'; return; }
+  const url = `cards/${code}.html`;
+  msg.textContent = '* unwrapping... *';
+  try {
+    const res = await fetch(url, { method: 'HEAD' });
+    if (!res.ok) { msg.textContent = '* hmm, that code does not open anything *'; return; }
+  } catch { /* file:// can't fetch; just try the link */ }
+  location.href = url;
+});
 </script>
 </body>
 </html>
