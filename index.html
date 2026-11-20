@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASCII Christmas</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="A rotating 3D ASCII Christmas tree with lights, presents and a golden ring under a starry sky"></canvas>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const TAU = Math.PI * 2, rnd = Math.random;
+const D = 24, YC = 4.6, PITCH = 0.32;                 // camera distance, look-at height, downward tilt
+const SPEED = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.08 : 0.35;
+const RAMP = '.:-=+*#%@';
+
+// ---- scene: a cloud of 3D points (y is up, ground at y=0) ----
+const P = [];
+const add = (x, y, z, nx, ny, nz, k, o = {}) => P.push({ x, y, z, nx, ny, nz, k, ...o });
+const TREE = 0, ORN = 1, LIGHT = 2, TRUNK = 3, RING = 4, GIFT = 5, TEXT = 6;
+
+// tree: 5 stacked tiers inside a cone envelope
+const H0 = 0.9, H1 = 10, TIERS = 5;
+const radius = h => {
+  const u = (h - H0) / (H1 - H0), frac = (u * TIERS) % 1;
+  return 3.6 * (1 - u) * (0.4 + 0.6 * (1 - frac));
+};
+for (let h = H0; h < H1; h += 0.09) {
+  const r = radius(h), n = Math.max(6, Math.round(TAU * r / 0.08));
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU + rnd() * 0.05, c = Math.cos(a), s = Math.sin(a);
+    if (rnd() < 0.03) add(r * c, h, r * s, c, 0.45, s, ORN, { hue: [0, 45, 200, 290, 330][i % 5], ph: rnd() * TAU });
+    else add(r * c, h, r * s, c, 0.45, s, TREE, { v: rnd() });
+  }
+}
+// rainbow garland spiralling up the tree
+for (let s = 0; s < 1; s += 0.0012) {
+  const h = 1.2 + s * 8.2, a = s * TAU * 5, r = radius(h) + 0.1;
+  add(r * Math.cos(a), h, r * Math.sin(a), Math.cos(a), 0.3, Math.sin(a), LIGHT, { s });
+}
+// trunk
+for (let h = 0; h < H0; h += 0.08)
+  for (let a = 0; a < TAU; a += 0.12) add(0.45 * Math.cos(a), h, 0.45 * Math.sin(a), Math.cos(a), 0, Math.sin(a), TRUNK);
+// golden clock-face ring on the ground
+const circle = (r, step) => { for (let a = 0; a < TAU; a += step / r) add(r * Math.cos(a), 0, r * Math.sin(a), 0, 1, 0, RING); };
+circle(6.3, 0.06); circle(5.9, 0.06); circle(4.6, 0.18); circle(1.3, 0.12);
+for (let i = 0; i < 60; i++) {
+  const a = (i / 60) * TAU, inner = i % 5 ? 5.6 : 5.3;
+  for (let r = inner; r < 5.9; r += 0.06) add(r * Math.cos(a), 0, r * Math.sin(a), 0, 1, 0, RING);
+}
+['XII','I','II','III','IV','V','VI','VII','VIII','IX','X','XI'].forEach((t, i) => {
+  const a = (i / 12) * TAU - Math.PI / 2;
+  add(5.0 * Math.cos(a), 0, 5.0 * Math.sin(a), 0, 1, 0, TEXT, { t });
+});
+// presents: boxes with a gold ribbon cross
+function gift(cx, cz, w, ht, hue) {
+  const st = 0.08, half = w / 2, rib = u => Math.abs(u) < 0.08;
+  for (let u = -half; u <= half; u += st) {
+    for (let v = -half; v <= half; v += st) add(cx + u, ht, cz + v, 0, 1, 0, GIFT, { hue, rib: rib(u) || rib(v) });
+    for (let y = 0; y <= ht; y += st) {
+      add(cx + u, y, cz - half, 0, 0, -1, GIFT, { hue, rib: rib(u) });
+      add(cx + u, y, cz + half, 0, 0, 1, GIFT, { hue, rib: rib(u) });
+      add(cx - half, y, cz + u, -1, 0, 0, GIFT, { hue, rib: rib(u) });
+      add(cx + half, y, cz + u, 1, 0, 0, GIFT, { hue, rib: rib(u) });
+    }
+  }
+}
+gift(1.9, 2.0, 0.9, 0.7, 0); gift(-2.2, 1.3, 0.8, 0.6, 210); gift(0.4, -2.5, 1.0, 0.8, 320); gift(-1.2, -2.0, 0.6, 0.5, 45);
+
+// ---- screen / buffers ----
+let W, H, FS, CW, COLS, ROWS, N, zb, CH, CL, sky;
+function resize() {
+  const dpr = devicePixelRatio || 1;
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  FS = Math.max(7, Math.round(Math.min(W, H) / 75));
+  ctx.font = `${FS}px ui-monospace, Menlo, Consolas, monospace`;
+  ctx.textBaseline = 'top';
+  CW = ctx.measureText('M').width;
+  COLS = Math.ceil(W / CW); ROWS = Math.ceil(H / FS); N = COLS * ROWS;
+  zb = new Float32Array(N); CH = new Array(N); CL = new Array(N);
+  sky = Array.from({ length: Math.round(N * 0.006) }, () => ({
+    i: Math.floor(rnd() * ROWS * 0.8) * COLS + Math.floor(rnd() * COLS), ph: rnd() * TAU, ch: '..·*+'[Math.floor(rnd() * 5)],
+  }));
+}
+addEventListener('resize', resize);
+resize();
+
+// ---- projection (writes into PX, PY, PZ to avoid allocations) ----
+let ca = 1, sa = 0, F = 1, PX = 0, PY = 0, PZ = 0;
+const cp = Math.cos(PITCH), sp = Math.sin(PITCH);
+function proj(x, y, z) {
+  y -= YC;
+  const xr = x * ca - z * sa, zr = x * sa + z * ca;
+  PZ = -y * sp + zr * cp;
+  const d = D + PZ;
+  PX = Math.round((W / 2 + xr * F / d) / CW);
+  PY = Math.round((H * 0.45 - (y * cp + zr * sp) * F / d) / FS);
+}
+function plot(c, r, z, ch, col) {
+  if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return;
+  const i = r * COLS + c;
+  if (z < zb[i]) { zb[i] = z; CH[i] = ch; CL[i] = col; }
+}
+const shadeOf = p => {                     // Lambert light from upper-left-front
+  const nx = p.nx * ca - p.nz * sa, nz0 = p.nx * sa + p.nz * ca;
+  const ny = p.ny * cp + nz0 * sp, nz = -p.ny * sp + nz0 * cp;
+  const l = (-0.45 * nx + 0.55 * ny - 0.7 * nz) / Math.hypot(p.nx, p.ny, p.nz);
+  return 0.2 + 0.8 * Math.max(0, l);
+};
+const ramp = s => RAMP[Math.min(RAMP.length - 1, Math.floor(s * RAMP.length))];
+
+// self-check: scene exists and the look-at point projects to screen centre
+console.assert(P.length > 5000, 'scene too sparse');
+F = 1000; proj(0, YC, 0);
+console.assert(PX === Math.round(W / 2 / CW) && PY === Math.round(H * 0.45 / FS), 'projection off-centre');
+
+function frame(ms) {
+  const t = ms / 1000, ang = t * SPEED;
+  ca = Math.cos(ang); sa = Math.sin(ang);
+  F = Math.min(0.62 * H * D / 11, 0.9 * W * D / 14);
+  zb.fill(1e9); CH.fill('');
+
+  for (const s of sky) {                  // twinkling background, behind everything
+    const b = 0.5 + 0.5 * Math.sin(t * 1.5 + s.ph);
+    if (b > 0.15) { zb[s.i] = 1e8; CH[s.i] = s.ch; CL[s.i] = `rgba(220,225,255,${b * 0.8})`; }
+  }
+
+  for (const p of P) {
+    proj(p.x, p.y, p.z);
+    const z = PZ;
+    switch (p.k) {
+      case TREE: { const s = shadeOf(p); plot(PX, PY, z, ramp(s), `hsl(${105 + p.v * 35},${50 + p.v * 30}%,${8 + s * 48}%)`); break; }
+      case ORN: { const b = 0.55 + 0.45 * Math.sin(t * 4 + p.ph); plot(PX, PY, z - 0.05, b > 0.6 ? '@' : 'o', `hsl(${p.hue},100%,${35 + b * 35}%)`); break; }
+      case LIGHT: { const b = Math.sin(t * 6 + p.s * 300); plot(PX, PY, z - 0.1, b > 0 ? '*' : '+', `hsl(${(p.s * 1080 + t * 120) % 360},100%,${55 + b * 15}%)`); break; }
+      case TRUNK: { const s = shadeOf(p); plot(PX, PY, z, '#', `hsl(25,55%,${10 + s * 25}%)`); break; }
+      case RING: { const b = Math.max(0, Math.min(1, (7 - z) / 14)); plot(PX, PY, z, ramp(0.1 + b * 0.5), `hsl(44,90%,${18 + b * 42}%)`); break; }
+      case GIFT: { const s = shadeOf(p); plot(PX, PY, z, p.rib ? '+' : ramp(s), p.rib ? `hsl(48,100%,${35 + s * 35}%)` : `hsl(${p.hue},80%,${15 + s * 40}%)`); break; }
+      case TEXT: { const b = Math.max(0, Math.min(1, (7 - z) / 14)), c0 = PX - (p.t.length >> 1);
+        for (let j = 0; j < p.t.length; j++) plot(c0 + j, PY, z - 0.01, p.t[j], `hsl(44,95%,${25 + b * 45}%)`); break; }
+    }
+  }
+
+  // star on top, always in front
+  proj(0, H1 + 0.35, 0);
+  const glow = 0.5 + 0.5 * Math.sin(t * 3);
+  [' \\|/ ', '--*--', ' /|\\ '].forEach((row, dy) => {
+    for (let dx = 0; dx < 5; dx++) if (row[dx] !== ' ')
+      plot(PX - 2 + dx, PY - 1 + dy, -1e9, row[dx], `hsl(50,100%,${row[dx] === '*' ? 85 : 55 + glow * 20}%)`);
+  });
+
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < N; i++) {
+    if (!CH[i]) continue;
+    ctx.fillStyle = CL[i];
+    ctx.fillText(CH[i], (i % COLS) * CW, Math.floor(i / COLS) * FS);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
